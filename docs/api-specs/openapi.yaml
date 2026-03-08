@@ -1,0 +1,279 @@
+openapi: 3.0.3
+info:
+  title: Web Application API
+  description: Webアプリケーション REST API仕様書
+  version: 1.0.0
+
+servers:
+  - url: https://api.example.com/v1
+    description: 本番環境
+  - url: https://stg-api.example.com/v1
+    description: ステージング環境
+  - url: http://localhost:3000/v1
+    description: 開発環境
+
+tags:
+  - name: auth
+    description: 認証・認可
+  - name: users
+    description: ユーザー管理
+  - name: posts
+    description: 投稿管理
+
+paths:
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: ログイン
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+                  example: "password123"
+      responses:
+        "200":
+          description: ログイン成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    description: アクセストークン（JWT, 有効期限1時間）
+                  refresh_token:
+                    type: string
+                    description: リフレッシュトークン（有効期限30日）
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: ログアウト
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: ログアウト成功
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: アクセストークン更新
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          description: トークン更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /users/me:
+    get:
+      tags: [users]
+      summary: 自分のユーザー情報取得
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /posts:
+    get:
+      tags: [posts]
+      summary: 投稿一覧取得
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [draft, published, archived]
+      responses:
+        "200":
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Post"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+    post:
+      tags: [posts]
+      summary: 投稿作成
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, content]
+              properties:
+                title:
+                  type: string
+                  maxLength: 255
+                content:
+                  type: string
+                status:
+                  type: string
+                  enum: [draft, published]
+                  default: draft
+                tags:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "201":
+          description: 作成成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          type: string
+          enum: [admin, user]
+        created_at:
+          type: string
+          format: date-time
+
+    Post:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        content:
+          type: string
+        status:
+          type: string
+          enum: [draft, published, archived]
+        author:
+          $ref: "#/components/schemas/User"
+        tags:
+          type: array
+          items:
+            type: string
+        published_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Pagination:
+      type: object
+      properties:
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+        total_pages:
+          type: integer
+
+    Error:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+  responses:
+    Unauthorized:
+      description: 認証エラー
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: UNAUTHORIZED
+            message: 認証が必要です
+    NotFound:
+      description: リソースが見つからない
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

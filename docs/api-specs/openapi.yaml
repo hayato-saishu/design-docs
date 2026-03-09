@@ -1,13 +1,13 @@
 openapi: 3.0.3
 info:
-  title: Web Application API
-  description: Webアプリケーション REST API仕様書
+  title: 家計簿アプリ API
+  description: 家計簿アプリ REST API仕様書
   version: 1.0.0
 
 servers:
-  - url: https://api.example.com/v1
+  - url: https://api.kakeibo.example.com/v1
     description: 本番環境
-  - url: https://stg-api.example.com/v1
+  - url: https://stg-api.kakeibo.example.com/v1
     description: ステージング環境
   - url: http://localhost:3000/v1
     description: 開発環境
@@ -17,10 +17,56 @@ tags:
     description: 認証・認可
   - name: users
     description: ユーザー管理
-  - name: posts
-    description: 投稿管理
+  - name: transactions
+    description: 収支明細管理
+  - name: categories
+    description: カテゴリ管理
+  - name: recurring-incomes
+    description: 定期収入設定
 
 paths:
+  /users:
+    post:
+      tags: [users]
+      summary: ユーザー登録
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name:
+                  type: string
+                  maxLength: 50
+                  example: 山田 太郎
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+                  example: "password123"
+      responses:
+        "201":
+          description: 登録成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "409":
+          description: メールアドレス重複
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                code: EMAIL_ALREADY_EXISTS
+                message: このメールアドレスはすでに登録されています
+
   /auth/login:
     post:
       tags: [auth]
@@ -98,43 +144,38 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /users/me:
+  /transactions:
     get:
-      tags: [users]
-      summary: 自分のユーザー情報取得
+      tags: [transactions]
+      summary: 明細一覧取得
+      description: 月別・カテゴリ別で絞り込み可能。収支サマリーも返却する。
       security:
         - BearerAuth: []
-      responses:
-        "200":
-          description: 取得成功
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/User"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /posts:
-    get:
-      tags: [posts]
-      summary: 投稿一覧取得
       parameters:
-        - name: page
+        - name: year
           in: query
+          required: true
           schema:
             type: integer
-            default: 1
-        - name: limit
+            example: 2026
+        - name: month
           in: query
+          required: true
           schema:
             type: integer
-            default: 20
-            maximum: 100
-        - name: status
+            minimum: 1
+            maximum: 12
+            example: 3
+        - name: category_id
           in: query
           schema:
             type: string
-            enum: [draft, published, archived]
+            format: uuid
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [income, expense]
       responses:
         "200":
           description: 取得成功
@@ -146,12 +187,15 @@ paths:
                   data:
                     type: array
                     items:
-                      $ref: "#/components/schemas/Post"
-                  pagination:
-                    $ref: "#/components/schemas/Pagination"
+                      $ref: "#/components/schemas/Transaction"
+                  summary:
+                    $ref: "#/components/schemas/TransactionSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
     post:
-      tags: [posts]
-      summary: 投稿作成
+      tags: [transactions]
+      summary: 明細登録
       security:
         - BearerAuth: []
       requestBody:
@@ -160,30 +204,289 @@ paths:
           application/json:
             schema:
               type: object
-              required: [title, content]
+              required: [category_id, type, amount, date]
               properties:
-                title:
+                category_id:
                   type: string
-                  maxLength: 255
-                content:
+                  format: uuid
+                type:
                   type: string
-                status:
+                  enum: [income, expense]
+                amount:
+                  type: integer
+                  minimum: 1
+                  example: 5000
+                memo:
                   type: string
-                  enum: [draft, published]
-                  default: draft
-                tags:
-                  type: array
-                  items:
-                    type: string
+                  maxLength: 200
+                  example: スーパーで食材購入
+                date:
+                  type: string
+                  format: date
+                  example: "2026-03-08"
+      responses:
+        "201":
+          description: 登録成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /transactions/{id}:
+    put:
+      tags: [transactions]
+      summary: 明細更新
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                category_id:
+                  type: string
+                  format: uuid
+                amount:
+                  type: integer
+                  minimum: 1
+                memo:
+                  type: string
+                  maxLength: 200
+                date:
+                  type: string
+                  format: date
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    delete:
+      tags: [transactions]
+      summary: 明細削除
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: 削除成功
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /categories:
+    get:
+      tags: [categories]
+      summary: カテゴリ一覧取得
+      description: システム共通カテゴリとユーザー独自カテゴリを返却する。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [income, expense]
+      responses:
+        "200":
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Category"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    post:
+      tags: [categories]
+      summary: カテゴリ作成
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, type]
+              properties:
+                name:
+                  type: string
+                  maxLength: 50
+                  example: 外食
+                type:
+                  type: string
+                  enum: [income, expense]
+                color:
+                  type: string
+                  example: "#FF5733"
       responses:
         "201":
           description: 作成成功
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Post"
+                $ref: "#/components/schemas/Category"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /recurring-incomes:
+    get:
+      tags: [recurring-incomes]
+      summary: 定期収入設定一覧取得
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RecurringIncome"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    post:
+      tags: [recurring-incomes]
+      summary: 定期収入設定登録
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category_id, amount, day_of_month]
+              properties:
+                category_id:
+                  type: string
+                  format: uuid
+                amount:
+                  type: integer
+                  minimum: 1
+                  example: 250000
+                memo:
+                  type: string
+                  maxLength: 200
+                  example: 給与
+                day_of_month:
+                  type: integer
+                  minimum: 1
+                  maximum: 28
+                  example: 25
+      responses:
+        "201":
+          description: 登録成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecurringIncome"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /recurring-incomes/{id}:
+    put:
+      tags: [recurring-incomes]
+      summary: 定期収入設定更新
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                category_id:
+                  type: string
+                  format: uuid
+                amount:
+                  type: integer
+                  minimum: 1
+                memo:
+                  type: string
+                  maxLength: 200
+                day_of_month:
+                  type: integer
+                  minimum: 1
+                  maximum: 28
+                is_active:
+                  type: boolean
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecurringIncome"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    delete:
+      tags: [recurring-incomes]
+      summary: 定期収入設定削除
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: 削除成功
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
 components:
   securitySchemes:
@@ -199,41 +502,57 @@ components:
         id:
           type: string
           format: uuid
+        name:
+          type: string
         email:
           type: string
           format: email
-        name:
-          type: string
-        role:
-          type: string
-          enum: [admin, user]
         created_at:
           type: string
           format: date-time
 
-    Post:
+    Category:
       type: object
       properties:
         id:
           type: string
           format: uuid
-        title:
+        name:
           type: string
-        content:
+        type:
           type: string
-        status:
+          enum: [income, expense]
+        color:
           type: string
-          enum: [draft, published, archived]
-        author:
-          $ref: "#/components/schemas/User"
-        tags:
-          type: array
-          items:
-            type: string
-        published_at:
+          example: "#FF5733"
+        is_system:
+          type: boolean
+          description: true=システム共通カテゴリ
+
+    Transaction:
+      type: object
+      properties:
+        id:
           type: string
-          format: date-time
+          format: uuid
+        type:
+          type: string
+          enum: [income, expense]
+        amount:
+          type: integer
+        memo:
+          type: string
           nullable: true
+        date:
+          type: string
+          format: date
+        category:
+          $ref: "#/components/schemas/Category"
+        recurring_income_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: 定期収入から自動生成された場合にセット
         created_at:
           type: string
           format: date-time
@@ -241,17 +560,43 @@ components:
           type: string
           format: date-time
 
-    Pagination:
+    TransactionSummary:
       type: object
       properties:
-        total:
+        total_income:
           type: integer
-        page:
+          description: 合計収入（円）
+        total_expense:
           type: integer
-        limit:
+          description: 合計支出（円）
+        balance:
           type: integer
-        total_pages:
+          description: 残高（収入 - 支出）
+
+    RecurringIncome:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        category:
+          $ref: "#/components/schemas/Category"
+        amount:
           type: integer
+        memo:
+          type: string
+          nullable: true
+        day_of_month:
+          type: integer
+          description: 毎月の反映日（1〜28）
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     Error:
       type: object
@@ -271,9 +616,21 @@ components:
           example:
             code: UNAUTHORIZED
             message: 認証が必要です
+    Forbidden:
+      description: 権限エラー
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: FORBIDDEN
+            message: このリソースへのアクセス権限がありません
     NotFound:
       description: リソースが見つからない
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+          example:
+            code: NOT_FOUND
+            message: リソースが見つかりません
